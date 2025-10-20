@@ -33,6 +33,7 @@ import rkr.simplekeyboard.inputmethod.event.Event;
 import rkr.simplekeyboard.inputmethod.event.InputTransaction;
 import rkr.simplekeyboard.inputmethod.latin.LatinIME;
 import rkr.simplekeyboard.inputmethod.latin.RichInputConnection;
+import rkr.simplekeyboard.inputmethod.latin.Subtype;
 import rkr.simplekeyboard.inputmethod.latin.common.Constants;
 import rkr.simplekeyboard.inputmethod.latin.common.StringUtils;
 import rkr.simplekeyboard.inputmethod.latin.settings.SettingsValues;
@@ -522,6 +523,24 @@ public final class InputLogic {
         if (codePoint >= '0' && codePoint <= '9') {
             sendDownUpKeyEvent(codePoint - '0' + KeyEvent.KEYCODE_0);
             return;
+        }
+
+        // Handle Kannada vowel modification for custom layout
+        final Subtype currentSubtype = mLatinIME.getCurrentSubtype();
+        if (currentSubtype != null && SubtypeLocaleUtils.LAYOUT_KANNADA_CUSTOM.equals(currentSubtype.getKeyboardLayoutSet())) {
+            final int previousCodePoint = mConnection.getCodePointBeforeCursor();
+            if (previousCodePoint != Constants.NOT_A_CODE) {
+                final rkr.simplekeyboard.inputmethod.latin.utils.KannadaVowelModifier.Result result =
+                        rkr.simplekeyboard.inputmethod.latin.utils.KannadaVowelModifier
+                                .processVowelModification((char) previousCodePoint, (char) codePoint);
+                if (result.modified) {
+                    // Delete the previous character
+                    mConnection.deleteTextBeforeCursor(1);
+                    // Commit the modified text
+                    mConnection.commitText(result.replacement, 1);
+                    return;
+                }
+            }
         }
 
         mConnection.commitText(StringUtils.newSingleCodePointString(codePoint), 1);

@@ -931,6 +931,10 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
         return shouldSwitchToOtherInputMethods(token);
     }
 
+    public Subtype getCurrentSubtype() {
+        return mRichImm.getCurrentSubtype();
+    }
+
     private void setNavigationBarColor() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             final Window window = getWindow().getWindow();
