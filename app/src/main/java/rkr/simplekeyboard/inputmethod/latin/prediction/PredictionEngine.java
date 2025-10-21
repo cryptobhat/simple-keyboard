@@ -58,10 +58,13 @@ public class PredictionEngine {
     // Components
     private InputNormalizer inputNormalizer;
     private SuggestionRanker suggestionRanker;
+    private FeatureScorer featureScorer;
+    private AbbreviationExpander abbreviationExpander;
 
     // Context tracking
     private String previousWord;
     private String secondPreviousWord;
+    private String thirdPreviousWord;
 
     // State
     private boolean initialized = false;
@@ -77,11 +80,14 @@ public class PredictionEngine {
 
         this.inputNormalizer = new InputNormalizer();
         this.suggestionRanker = new SuggestionRanker();
+        this.featureScorer = new FeatureScorer();
+        this.abbreviationExpander = new AbbreviationExpander();
 
         this.predictionCache = new LruCache<>(CACHE_SIZE);
 
         this.previousWord = null;
         this.secondPreviousWord = null;
+        this.thirdPreviousWord = null;
     }
 
     /**
@@ -189,30 +195,82 @@ public class PredictionEngine {
         int kannadaCount = languageSplit[0];
         int englishCount = languageSplit[1];
 
-        // Get dictionary suggestions
+        // Check for abbreviation expansion first
+        LanguageDetector.Language detectedLang = LanguageDetector.detectLanguage(typedWord);
+        String expansion = abbreviationExpander.getExpansion(typedWord, detectedLang);
+        if (expansion != null) {
+            // Add abbreviation expansion as high-priority suggestion
+            allSuggestions.add(new Suggestion(
+                expansion,
+                10000,
+                Suggestion.Source.EXACT_MATCH
+            ));
+        }
+
+        // Get dictionary suggestions with fuzzy matching
         if (kannadaCount > 0 && kannadaDict != null) {
+            // Try exact prefix matches first
             List<String> kannadaWords = kannadaDict.getCompletions(
                 normalizedInput, kannadaCount * 2
             );
+
+            // Add fuzzy matches if we don't have enough suggestions
+            if (kannadaWords.size() < kannadaCount && normalizedInput.length() >= 3) {
+                List<String> fuzzyWords = kannadaDict.getFuzzyCompletions(
+                    normalizedInput, kannadaCount * 2
+                );
+                for (String word : fuzzyWords) {
+                    if (!kannadaWords.contains(word)) {
+                        kannadaWords.add(word);
+                    }
+                }
+            }
+
             for (String word : kannadaWords) {
                 int frequency = kannadaDict.getFrequency(word);
+
+                // Use feature-based scoring
+                FeatureScorer.SuggestionFeatures features =
+                    featureScorer.extractFeatures(word, typedWord, frequency, Suggestion.Source.DICTIONARY);
+                double score = featureScorer.calculateScore(features);
+
                 allSuggestions.add(new Suggestion(
                     word,
-                    frequency,
+                    score,
                     Suggestion.Source.DICTIONARY
                 ));
             }
         }
 
         if (englishCount > 0 && englishDict != null) {
+            // Try exact prefix matches first
             List<String> englishWords = englishDict.getCompletions(
                 typedWord.toLowerCase(), englishCount * 2
             );
+
+            // Add fuzzy matches if needed
+            if (englishWords.size() < englishCount && typedWord.length() >= 3) {
+                List<String> fuzzyWords = englishDict.getFuzzyCompletions(
+                    typedWord.toLowerCase(), englishCount * 2
+                );
+                for (String word : fuzzyWords) {
+                    if (!englishWords.contains(word)) {
+                        englishWords.add(word);
+                    }
+                }
+            }
+
             for (String word : englishWords) {
                 int frequency = englishDict.getFrequency(word);
+
+                // Use feature-based scoring
+                FeatureScorer.SuggestionFeatures features =
+                    featureScorer.extractFeatures(word, typedWord, frequency, Suggestion.Source.DICTIONARY);
+                double score = featureScorer.calculateScore(features);
+
                 allSuggestions.add(new Suggestion(
                     word,
-                    frequency,
+                    score,
                     Suggestion.Source.DICTIONARY
                 ));
             }
@@ -265,7 +323,7 @@ public class PredictionEngine {
 
         List<Suggestion> allSuggestions = new ArrayList<>();
 
-        // Get n-gram predictions
+        // Get n-gram predictions (includes both bigrams and trigrams)
         if (ngramModel != null && previousWord != null) {
             List<NgramModel.WordScore> ngramPredictions =
                 ngramModel.getPredictions(secondPreviousWord, previousWord, MAX_SUGGESTIONS * 2);
@@ -275,6 +333,20 @@ public class PredictionEngine {
                     ws.word,
                     ws.score,
                     Suggestion.Source.NGRAM
+                ));
+            }
+        }
+
+        // Get user trigram predictions (highest priority - most context)
+        if (userLearningModel != null && secondPreviousWord != null && previousWord != null) {
+            List<UserLearningModel.WordScore> trigramSuggestions =
+                userLearningModel.getTrigramSuggestions(secondPreviousWord, previousWord, MAX_SUGGESTIONS);
+
+            for (UserLearningModel.WordScore ws : trigramSuggestions) {
+                allSuggestions.add(new Suggestion(
+                    ws.word,
+                    ws.score,
+                    Suggestion.Source.USER_LEARNED
                 ));
             }
         }
@@ -319,7 +391,8 @@ public class PredictionEngine {
             return;
         }
 
-        // Update context history
+        // Update context history (track 3 words now)
+        thirdPreviousWord = secondPreviousWord;
         secondPreviousWord = previousWord;
         previousWord = word;
 
@@ -330,6 +403,11 @@ public class PredictionEngine {
             // Learn bigram
             if (secondPreviousWord != null) {
                 userLearningModel.addBigram(secondPreviousWord, word);
+            }
+
+            // Learn trigram (for even better context)
+            if (thirdPreviousWord != null && secondPreviousWord != null) {
+                userLearningModel.addTrigram(thirdPreviousWord, secondPreviousWord, word);
             }
         }
 
@@ -343,6 +421,7 @@ public class PredictionEngine {
     public void resetContext() {
         previousWord = null;
         secondPreviousWord = null;
+        thirdPreviousWord = null;
         predictionCache.evictAll();
     }
 

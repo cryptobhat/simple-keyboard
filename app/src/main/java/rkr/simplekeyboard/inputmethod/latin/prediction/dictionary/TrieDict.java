@@ -206,6 +206,138 @@ public class TrieDict {
     }
 
     /**
+     * Get fuzzy matches for a word (typo correction).
+     * Uses edit distance to find similar words.
+     *
+     * @param word The word to match (potentially misspelled)
+     * @param maxDistance Maximum edit distance (1-2 recommended)
+     * @param maxResults Maximum number of results
+     * @return List of similar words with frequencies
+     */
+    public List<WordFreq> getFuzzyMatches(String word, int maxDistance, int maxResults) {
+        if (word == null || word.isEmpty() || maxDistance < 1) {
+            return Collections.emptyList();
+        }
+
+        List<WordFreq> allWords = new ArrayList<>();
+        collectAllWords(root, "", allWords);
+
+        List<WordFreq> matches = new ArrayList<>();
+        for (WordFreq candidate : allWords) {
+            int distance = editDistance(word, candidate.word);
+            if (distance <= maxDistance && distance > 0) {
+                // Adjust frequency based on edit distance
+                int adjustedFreq = (int) (candidate.frequency * (1.0 - (distance * 0.3)));
+                matches.add(new WordFreq(candidate.word, adjustedFreq));
+            }
+        }
+
+        // Sort by adjusted frequency
+        Collections.sort(matches, (a, b) -> b.frequency - a.frequency);
+
+        return matches.subList(0, Math.min(maxResults, matches.size()));
+    }
+
+    /**
+     * Get words similar to prefix using keyboard-aware fuzzy matching.
+     * Better for typos where adjacent keys are hit.
+     *
+     * @param prefix The typed prefix
+     * @param maxResults Maximum results
+     * @return Similar words
+     */
+    public List<String> getFuzzyCompletions(String prefix, int maxResults) {
+        if (prefix == null || prefix.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // First try exact prefix match
+        List<String> exactMatches = getCompletions(prefix, maxResults);
+        if (exactMatches.size() >= maxResults) {
+            return exactMatches;
+        }
+
+        // Add fuzzy matches if needed
+        Set<String> resultSet = new LinkedHashSet<>(exactMatches);
+
+        if (prefix.length() >= 3) {
+            List<WordFreq> fuzzyMatches = getFuzzyMatches(prefix, 1, maxResults * 2);
+            for (WordFreq match : fuzzyMatches) {
+                resultSet.add(match.word);
+                if (resultSet.size() >= maxResults) {
+                    break;
+                }
+            }
+        }
+
+        return new ArrayList<>(resultSet);
+    }
+
+    /**
+     * Calculate edit distance (Levenshtein) between two strings.
+     *
+     * @param s1 First string
+     * @param s2 Second string
+     * @return Edit distance
+     */
+    private int editDistance(String s1, String s2) {
+        if (s1 == null || s2 == null) {
+            return Integer.MAX_VALUE;
+        }
+
+        int len1 = s1.length();
+        int len2 = s2.length();
+
+        if (len1 == 0) return len2;
+        if (len2 == 0) return len1;
+
+        // Optimize: if length difference is too large, skip calculation
+        if (Math.abs(len1 - len2) > 2) {
+            return Integer.MAX_VALUE;
+        }
+
+        int[][] dp = new int[len1 + 1][len2 + 1];
+
+        for (int i = 0; i <= len1; i++) {
+            dp[i][0] = i;
+        }
+
+        for (int j = 0; j <= len2; j++) {
+            dp[0][j] = j;
+        }
+
+        for (int i = 1; i <= len1; i++) {
+            for (int j = 1; j <= len2; j++) {
+                int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
+
+                dp[i][j] = Math.min(
+                    Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                    dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+
+        return dp[len1][len2];
+    }
+
+    /**
+     * Collect all words from the trie (for fuzzy matching).
+     *
+     * @param node Starting node
+     * @param prefix Current prefix
+     * @param results List to collect results
+     */
+    private void collectAllWords(TrieNode node, String prefix, List<WordFreq> results) {
+        if (node.isWordEnd) {
+            results.add(new WordFreq(prefix, node.frequency));
+        }
+
+        for (Map.Entry<Character, TrieNode> entry : node.children.entrySet()) {
+            collectAllWords(entry.getValue(), prefix + entry.getKey(), results);
+        }
+    }
+
+    /**
      * Get the total number of words in the dictionary.
      *
      * @return Word count

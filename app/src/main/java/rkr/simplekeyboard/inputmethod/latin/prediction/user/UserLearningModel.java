@@ -324,15 +324,141 @@ public class UserLearningModel {
                 new String[]{String.valueOf(cutoffTime)}
             );
 
+            // Delete old trigrams
+            int deletedTrigrams = db.delete(
+                UserDatabaseHelper.TABLE_TRIGRAMS,
+                UserDatabaseHelper.COLUMN_TRIGRAM_LAST_USED + " < ? AND " +
+                UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY + " < 2",
+                new String[]{String.valueOf(cutoffTime)}
+            );
+
             db.setTransactionSuccessful();
 
-            Log.i(TAG, "Pruned " + deletedWords + " words and " +
-                  deletedBigrams + " bigrams");
+            Log.i(TAG, "Pruned " + deletedWords + " words, " +
+                  deletedBigrams + " bigrams, and " + deletedTrigrams + " trigrams");
         } catch (Exception e) {
             Log.e(TAG, "Error pruning old entries", e);
         } finally {
             db.endTransaction();
         }
+    }
+
+    /**
+     * Record a trigram (3-word sequence) for advanced context prediction.
+     *
+     * @param word1 The first word (two words back)
+     * @param word2 The second word (one word back)
+     * @param word3 The third word (current word)
+     */
+    public void addTrigram(String word1, String word2, String word3) {
+        if (word1 == null || word2 == null || word3 == null ||
+            word1.isEmpty() || word2.isEmpty() || word3.isEmpty()) {
+            return;
+        }
+
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        long timestamp = System.currentTimeMillis();
+
+        try {
+            db.beginTransaction();
+
+            // Check if trigram exists
+            Cursor cursor = db.query(
+                UserDatabaseHelper.TABLE_TRIGRAMS,
+                new String[]{UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY},
+                UserDatabaseHelper.COLUMN_WORD1 + " = ? AND " +
+                UserDatabaseHelper.COLUMN_WORD2 + " = ? AND " +
+                UserDatabaseHelper.COLUMN_WORD3 + " = ?",
+                new String[]{word1, word2, word3},
+                null, null, null
+            );
+
+            ContentValues values = new ContentValues();
+            values.put(UserDatabaseHelper.COLUMN_WORD1, word1);
+            values.put(UserDatabaseHelper.COLUMN_WORD2, word2);
+            values.put(UserDatabaseHelper.COLUMN_WORD3, word3);
+            values.put(UserDatabaseHelper.COLUMN_TRIGRAM_LAST_USED, timestamp);
+
+            if (cursor.moveToFirst()) {
+                // Trigram exists - increment frequency
+                int currentFrequency = cursor.getInt(0);
+                values.put(UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY, currentFrequency + 1);
+
+                db.update(
+                    UserDatabaseHelper.TABLE_TRIGRAMS,
+                    values,
+                    UserDatabaseHelper.COLUMN_WORD1 + " = ? AND " +
+                    UserDatabaseHelper.COLUMN_WORD2 + " = ? AND " +
+                    UserDatabaseHelper.COLUMN_WORD3 + " = ?",
+                    new String[]{word1, word2, word3}
+                );
+            } else {
+                // New trigram
+                values.put(UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY, 1);
+                db.insert(UserDatabaseHelper.TABLE_TRIGRAMS, null, values);
+            }
+
+            cursor.close();
+            db.setTransactionSuccessful();
+        } catch (Exception e) {
+            Log.e(TAG, "Error adding trigram: " + word1 + " -> " + word2 + " -> " + word3, e);
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /**
+     * Get trigram-based next-word suggestions.
+     *
+     * @param word1 Second-to-last word
+     * @param word2 Last word
+     * @param maxResults Maximum number of results
+     * @return List of next-word suggestions
+     */
+    public List<WordScore> getTrigramSuggestions(String word1, String word2, int maxResults) {
+        List<WordScore> results = new ArrayList<>();
+        if (word1 == null || word2 == null || word1.isEmpty() || word2.isEmpty()) {
+            return results;
+        }
+
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+
+        String query = "SELECT " +
+            UserDatabaseHelper.COLUMN_WORD3 + ", " +
+            UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY + ", " +
+            UserDatabaseHelper.COLUMN_TRIGRAM_LAST_USED +
+            " FROM " + UserDatabaseHelper.TABLE_TRIGRAMS +
+            " WHERE " + UserDatabaseHelper.COLUMN_WORD1 + " = ? AND " +
+            UserDatabaseHelper.COLUMN_WORD2 + " = ?" +
+            " ORDER BY " + UserDatabaseHelper.COLUMN_TRIGRAM_FREQUENCY + " DESC" +
+            " LIMIT ?";
+
+        Cursor cursor = null;
+        try {
+            cursor = db.rawQuery(query, new String[]{word1, word2, String.valueOf(maxResults)});
+
+            while (cursor.moveToNext()) {
+                String word = cursor.getString(0);
+                int frequency = cursor.getInt(1);
+                long lastUsed = cursor.getLong(2);
+
+                // Calculate recency boost
+                long ageInDays = (System.currentTimeMillis() - lastUsed) / DAY_IN_MILLIS;
+                double recencyBoost = Math.max(0.1, 1.0 - (ageInDays / 90.0));
+
+                // Trigrams get 2.0x boost (more context = higher confidence)
+                double score = frequency * recencyBoost * 2.0;
+                results.add(new WordScore(word, score, frequency));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting trigram suggestions for: " + word1 + " " + word2, e);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+
+        return results;
     }
 
     /**
@@ -344,6 +470,7 @@ public class UserLearningModel {
             db.beginTransaction();
             db.delete(UserDatabaseHelper.TABLE_USER_WORDS, null, null);
             db.delete(UserDatabaseHelper.TABLE_BIGRAMS, null, null);
+            db.delete(UserDatabaseHelper.TABLE_TRIGRAMS, null, null);
             db.setTransactionSuccessful();
             Log.i(TAG, "Cleared all user learning data");
         } catch (Exception e) {

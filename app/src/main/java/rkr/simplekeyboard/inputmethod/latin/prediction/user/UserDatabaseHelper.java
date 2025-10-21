@@ -29,11 +29,12 @@ public class UserDatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "UserDatabaseHelper";
 
     private static final String DATABASE_NAME = "user_learning.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2; // Increased for trigram support
 
     // Table names
     public static final String TABLE_USER_WORDS = "user_words";
     public static final String TABLE_BIGRAMS = "user_bigrams";
+    public static final String TABLE_TRIGRAMS = "user_trigrams";
 
     // User Words table columns
     public static final String COLUMN_WORD = "word";
@@ -46,6 +47,11 @@ public class UserDatabaseHelper extends SQLiteOpenHelper {
     public static final String COLUMN_WORD2 = "word2";
     public static final String COLUMN_BIGRAM_FREQUENCY = "frequency";
     public static final String COLUMN_BIGRAM_LAST_USED = "last_used";
+
+    // Trigrams table columns
+    public static final String COLUMN_WORD3 = "word3";
+    public static final String COLUMN_TRIGRAM_FREQUENCY = "frequency";
+    public static final String COLUMN_TRIGRAM_LAST_USED = "last_used";
 
     // Create table SQL statements
     private static final String CREATE_USER_WORDS_TABLE =
@@ -65,14 +71,36 @@ public class UserDatabaseHelper extends SQLiteOpenHelper {
         "PRIMARY KEY (" + COLUMN_WORD1 + ", " + COLUMN_WORD2 + ")" +
         ")";
 
-    // Indexes for fast prefix search
+    private static final String CREATE_TRIGRAMS_TABLE =
+        "CREATE TABLE " + TABLE_TRIGRAMS + " (" +
+        COLUMN_WORD1 + " TEXT, " +
+        COLUMN_WORD2 + " TEXT, " +
+        COLUMN_WORD3 + " TEXT, " +
+        COLUMN_TRIGRAM_FREQUENCY + " INTEGER DEFAULT 1, " +
+        COLUMN_TRIGRAM_LAST_USED + " INTEGER, " +
+        "PRIMARY KEY (" + COLUMN_WORD1 + ", " + COLUMN_WORD2 + ", " + COLUMN_WORD3 + ")" +
+        ")";
+
+    // Indexes for fast prefix search and lookups
     private static final String CREATE_WORD_INDEX =
         "CREATE INDEX idx_word_prefix ON " + TABLE_USER_WORDS +
         "(" + COLUMN_WORD + " COLLATE NOCASE)";
 
+    private static final String CREATE_WORD_FREQ_INDEX =
+        "CREATE INDEX idx_word_freq ON " + TABLE_USER_WORDS +
+        "(" + COLUMN_FREQUENCY + " DESC)";
+
     private static final String CREATE_BIGRAM_INDEX =
         "CREATE INDEX idx_word1 ON " + TABLE_BIGRAMS +
         "(" + COLUMN_WORD1 + ")";
+
+    private static final String CREATE_BIGRAM_FREQ_INDEX =
+        "CREATE INDEX idx_bigram_freq ON " + TABLE_BIGRAMS +
+        "(" + COLUMN_WORD1 + ", " + COLUMN_BIGRAM_FREQUENCY + " DESC)";
+
+    private static final String CREATE_TRIGRAM_INDEX =
+        "CREATE INDEX idx_word12 ON " + TABLE_TRIGRAMS +
+        "(" + COLUMN_WORD1 + ", " + COLUMN_WORD2 + ")";
 
     public UserDatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -82,10 +110,17 @@ public class UserDatabaseHelper extends SQLiteOpenHelper {
     public void onCreate(SQLiteDatabase db) {
         Log.i(TAG, "Creating user learning database");
 
+        // Create tables
         db.execSQL(CREATE_USER_WORDS_TABLE);
         db.execSQL(CREATE_BIGRAMS_TABLE);
+        db.execSQL(CREATE_TRIGRAMS_TABLE);
+
+        // Create indexes for performance
         db.execSQL(CREATE_WORD_INDEX);
+        db.execSQL(CREATE_WORD_FREQ_INDEX);
         db.execSQL(CREATE_BIGRAM_INDEX);
+        db.execSQL(CREATE_BIGRAM_FREQ_INDEX);
+        db.execSQL(CREATE_TRIGRAM_INDEX);
 
         Log.i(TAG, "User learning database created successfully");
     }
@@ -95,11 +130,16 @@ public class UserDatabaseHelper extends SQLiteOpenHelper {
         Log.w(TAG, "Upgrading database from version " + oldVersion +
               " to " + newVersion);
 
-        // For now, simple upgrade strategy: drop and recreate
-        // In production, you'd want migration logic
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_USER_WORDS);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_BIGRAMS);
-        onCreate(db);
+        if (oldVersion < 2) {
+            // Add trigrams table and new indexes
+            db.execSQL(CREATE_TRIGRAMS_TABLE);
+            db.execSQL(CREATE_WORD_FREQ_INDEX);
+            db.execSQL(CREATE_BIGRAM_FREQ_INDEX);
+            db.execSQL(CREATE_TRIGRAM_INDEX);
+            Log.i(TAG, "Added trigram support and performance indexes");
+        }
+
+        // For other upgrades, add migration logic here
     }
 
     @Override
