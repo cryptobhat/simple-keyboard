@@ -294,6 +294,9 @@ public final class InputLogic {
      */
     private void handleNonSeparatorEvent(final Event event) {
         sendKeyCodePoint(event.mCodePoint);
+
+        // Update suggestions after character input
+        updateSuggestions();
     }
 
     /**
@@ -302,9 +305,22 @@ public final class InputLogic {
      * @param inputTransaction The transaction in progress.
      */
     private void handleSeparatorEvent(final Event event, final InputTransaction inputTransaction) {
+        // Get the word before space/separator
+        String lastWord = getLastTypedWord();
+
         sendKeyCodePoint(event.mCodePoint);
 
         inputTransaction.requireShiftUpdate(InputTransaction.SHIFT_UPDATE_NOW);
+
+        // Notify prediction engine about committed word
+        if (mLatinIME.getPredictionEngine() != null && lastWord != null && !lastWord.isEmpty()) {
+            mLatinIME.getPredictionEngine().onWordCommitted(lastWord);
+        }
+
+        // Clear suggestions after separator
+        if (mLatinIME.getSuggestionStripView() != null) {
+            mLatinIME.getSuggestionStripView().clear();
+        }
     }
 
     /**
@@ -652,5 +668,93 @@ public final class InputLogic {
             mConnection.commitText(transliterated, 1);
             mPhoneticBuffer.setLength(0);
         }
+    }
+
+    /**
+     * Update suggestions based on current typed word.
+     */
+    private void updateSuggestions() {
+        if (mLatinIME.getPredictionEngine() == null ||
+            !mLatinIME.getPredictionEngine().isInitialized() ||
+            mLatinIME.getSuggestionStripView() == null) {
+            return;
+        }
+
+        // Get current typed word
+        String currentWord = getCurrentTypedWord();
+        if (currentWord == null || currentWord.length() < 1) {
+            mLatinIME.getSuggestionStripView().clear();
+            return;
+        }
+
+        // Get current layout
+        final Subtype currentSubtype = mLatinIME.getCurrentSubtype();
+        rkr.simplekeyboard.inputmethod.latin.prediction.LayoutDetector.KeyboardLayout layout =
+            rkr.simplekeyboard.inputmethod.latin.prediction.LayoutDetector.detectLayout(currentSubtype);
+
+        // Get suggestions from prediction engine
+        java.util.List<rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion> suggestions =
+            mLatinIME.getPredictionEngine().getSuggestions(currentWord, layout);
+
+        // Update UI
+        mLatinIME.getSuggestionStripView().setSuggestions(suggestions);
+    }
+
+    /**
+     * Get the current word being typed.
+     */
+    private String getCurrentTypedWord() {
+        // For phonetic keyboard, use the buffer
+        final Subtype currentSubtype = mLatinIME.getCurrentSubtype();
+        if (currentSubtype != null &&
+            SubtypeLocaleUtils.LAYOUT_KANNADA_PHONETIC.equals(currentSubtype.getKeyboardLayoutSet()) &&
+            mPhoneticBuffer.length() > 0) {
+            return mPhoneticBuffer.toString();
+        }
+
+        // For other keyboards, read text before cursor from cached value
+        mConnection.reloadTextCache();
+        String textBeforeCursor = mConnection.getTextBeforeCursorCached();
+        if (textBeforeCursor == null || textBeforeCursor.length() == 0) {
+            return "";
+        }
+
+        // Find the last word (after last space/separator)
+        int lastSpace = Math.max(
+            Math.max(textBeforeCursor.lastIndexOf(' '), textBeforeCursor.lastIndexOf('\n')),
+            Math.max(textBeforeCursor.lastIndexOf('.'), textBeforeCursor.lastIndexOf(','))
+        );
+
+        if (lastSpace >= 0 && lastSpace < textBeforeCursor.length() - 1) {
+            return textBeforeCursor.substring(lastSpace + 1);
+        } else if (lastSpace < 0) {
+            return textBeforeCursor;
+        }
+
+        return "";
+    }
+
+    /**
+     * Get the last typed word (before separator).
+     */
+    private String getLastTypedWord() {
+        mConnection.reloadTextCache();
+        String textBeforeCursor = mConnection.getTextBeforeCursorCached();
+        if (textBeforeCursor == null || textBeforeCursor.length() == 0) {
+            return "";
+        }
+
+        String text = textBeforeCursor.trim();
+        if (text.isEmpty()) {
+            return "";
+        }
+
+        // Find the last word
+        String[] words = text.split("[\\s.,!?;:]+");
+        if (words.length > 0) {
+            return words[words.length - 1];
+        }
+
+        return "";
     }
 }

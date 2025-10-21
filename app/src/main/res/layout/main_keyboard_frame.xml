@@ -25,6 +25,95 @@
     android:layout_gravity="bottom"
     android:orientation="vertical" >
 
+    <!-- Material 3 Suggestion Bar with Mic Button -->
+    <LinearLayout
+        android:id="@+id/suggestion_strip"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:gravity="center_vertical"
+        android:background="@color/background_secondary_lxx_system">
+
+        <!-- Suggestion Text Container (Scrollable) -->
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/suggestion_chips_container"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <!-- Suggestion chips will be added programmatically here -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Suggestion"
+                    android:gravity="center"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/key_text_color_lxx_system"
+                    android:background="@drawable/suggestion_chip_background"
+                    android:layout_marginEnd="8dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Words"
+                    android:gravity="center"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/key_text_color_lxx_system"
+                    android:background="@drawable/suggestion_chip_background"
+                    android:layout_marginEnd="8dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Here"
+                    android:gravity="center"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/key_text_color_lxx_system"
+                    android:background="@drawable/suggestion_chip_background"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Mic Button with Material 3 Icon -->
+        <ImageButton
+            android:id="@+id/mic_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:src="@android:drawable/ic_btn_speak_now"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:tint="@color/key_functional_text_color_lxx_system"
+            android:contentDescription="Voice input"
+            android:scaleType="centerInside"
+            android:padding="8dp" />
+
+    </LinearLayout>
+
     <!-- To ensure that key preview popup is correctly placed when the current system locale is
          one of RTL locales, layoutDirection="ltr" is needed in the SDK version 17+. -->
     <rkr.simplekeyboard.inputmethod.keyboard.MainKeyboardView

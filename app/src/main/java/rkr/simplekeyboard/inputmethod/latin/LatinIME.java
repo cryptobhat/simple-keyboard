@@ -89,6 +89,10 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     private Locale mLocale;
     final InputLogic mInputLogic = new InputLogic(this /* LatinIME */);
 
+    // Prediction engine for bilingual suggestions
+    private rkr.simplekeyboard.inputmethod.latin.prediction.PredictionEngine mPredictionEngine;
+    private SuggestionStripView mSuggestionStripView;
+
     // TODO: Move these {@link View}s to {@link KeyboardSwitcher}.
     private View mInputView;
 
@@ -268,6 +272,15 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
         final IntentFilter filter = new IntentFilter();
         filter.addAction(AudioManager.RINGER_MODE_CHANGED_ACTION);
         registerReceiver(mRingerModeChangeReceiver, filter);
+
+        // Initialize prediction engine asynchronously
+        mPredictionEngine = new rkr.simplekeyboard.inputmethod.latin.prediction.PredictionEngine(this);
+        mPredictionEngine.initializeAsync(new rkr.simplekeyboard.inputmethod.latin.prediction.PredictionEngine.InitializationCallback() {
+            @Override
+            public void onInitialized(boolean success) {
+                Log.i(TAG, "Prediction engine initialized: " + success);
+            }
+        });
     }
 
     private void loadSettings() {
@@ -283,6 +296,12 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     public void onDestroy() {
         mSettings.onDestroy();
         unregisterReceiver(mRingerModeChangeReceiver);
+
+        // Shutdown prediction engine
+        if (mPredictionEngine != null) {
+            mPredictionEngine.shutdown();
+        }
+
         super.onDestroy();
     }
 
@@ -328,6 +347,17 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
         super.setInputView(view);
         mInputView = view;
         updateSoftInputWindowLayoutParameters();
+
+        // Initialize suggestion strip
+        if (view != null) {
+            mSuggestionStripView = new SuggestionStripView(this, view);
+            mSuggestionStripView.setListener(new SuggestionStripView.SuggestionClickListener() {
+                @Override
+                public void onSuggestionClicked(rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion suggestion) {
+                    onSuggestionSelected(suggestion);
+                }
+            });
+        }
     }
 
     @Override
@@ -933,6 +963,37 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
 
     public Subtype getCurrentSubtype() {
         return mRichImm.getCurrentSubtype();
+    }
+
+    public rkr.simplekeyboard.inputmethod.latin.prediction.PredictionEngine getPredictionEngine() {
+        return mPredictionEngine;
+    }
+
+    public SuggestionStripView getSuggestionStripView() {
+        return mSuggestionStripView;
+    }
+
+    /**
+     * Handle suggestion selection from the suggestion strip.
+     */
+    private void onSuggestionSelected(rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion suggestion) {
+        if (suggestion == null) {
+            return;
+        }
+
+        // For now, just commit the suggestion
+        // The user will need to select it to replace current text
+        mInputLogic.mConnection.commitText(suggestion.getWord() + " ", 1);
+
+        // Notify prediction engine
+        if (mPredictionEngine != null) {
+            mPredictionEngine.onWordCommitted(suggestion.getWord());
+        }
+
+        // Clear suggestions
+        if (mSuggestionStripView != null) {
+            mSuggestionStripView.clear();
+        }
     }
 
     private void setNavigationBarColor() {
