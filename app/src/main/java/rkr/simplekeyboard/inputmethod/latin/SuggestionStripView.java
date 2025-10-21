@@ -144,8 +144,11 @@ public class SuggestionStripView {
         chip.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Log.d(TAG, "Suggestion chip clicked: " + suggestion.getWord());
                 if (mListener != null) {
                     mListener.onSuggestionClicked(suggestion);
+                } else {
+                    Log.e(TAG, "No listener set for suggestion clicks!");
                 }
             }
         });

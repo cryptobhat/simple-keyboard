@@ -92,6 +92,8 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     // Prediction engine for bilingual suggestions
     private rkr.simplekeyboard.inputmethod.latin.prediction.PredictionEngine mPredictionEngine;
     private SuggestionStripView mSuggestionStripView;
+    private VoiceInputManager mVoiceInputManager;
+    private boolean mIsVoiceInputActive = false;
 
     // TODO: Move these {@link View}s to {@link KeyboardSwitcher}.
     private View mInputView;
@@ -281,6 +283,9 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
                 Log.i(TAG, "Prediction engine initialized: " + success);
             }
         });
+
+        // Initialize voice input manager
+        mVoiceInputManager = new VoiceInputManager(this);
     }
 
     private void loadSettings() {
@@ -300,6 +305,11 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
         // Shutdown prediction engine
         if (mPredictionEngine != null) {
             mPredictionEngine.shutdown();
+        }
+
+        // Cleanup voice input manager
+        if (mVoiceInputManager != null) {
+            mVoiceInputManager.destroy();
         }
 
         super.onDestroy();
@@ -357,6 +367,56 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
                     onSuggestionSelected(suggestion);
                 }
             });
+
+            // Initialize voice input with mic button
+            android.widget.ImageButton micButton = view.findViewById(rkr.simplekeyboard.inputmethod.R.id.mic_button);
+            if (mVoiceInputManager != null && micButton != null) {
+                mVoiceInputManager.initialize(micButton);
+                mVoiceInputManager.setListener(new VoiceInputManager.VoiceInputListener() {
+                    @Override
+                    public void onVoiceInputText(String text) {
+                        handleVoiceInputText(text);
+                    }
+
+                    @Override
+                    public void onVoiceInputError(int errorCode) {
+                        handleVoiceInputError(errorCode);
+                    }
+
+                    @Override
+                    public void onVoiceInputStarted() {
+                        mIsVoiceInputActive = true;
+
+                        // Request to keep input view shown
+                        try {
+                            requestShowSelf(0);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error requesting show self", e);
+                        }
+
+                        // Show "Listening..." in suggestions
+                        if (mSuggestionStripView != null) {
+                            java.util.List<rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion> listeningSuggestion =
+                                new java.util.ArrayList<>();
+                            listeningSuggestion.add(new rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion(
+                                "🎤 Listening...",
+                                1.0,
+                                rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion.Source.EXACT_MATCH
+                            ));
+                            mSuggestionStripView.setSuggestions(listeningSuggestion);
+                        }
+                    }
+
+                    @Override
+                    public void onVoiceInputStopped() {
+                        mIsVoiceInputActive = false;
+                        // Clear listening indicator
+                        if (mSuggestionStripView != null) {
+                            mSuggestionStripView.clear();
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -377,6 +437,13 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
 
     @Override
     public void onFinishInputView(final boolean finishingInput) {
+        // Stop voice input if active when keyboard is closing
+        if (mIsVoiceInputActive && mVoiceInputManager != null) {
+            Log.d(TAG, "Stopping voice input on finish input view");
+            mVoiceInputManager.stopListening();
+            mIsVoiceInputActive = false;
+        }
+
         mInputLogic.clearCaches();
         mRichImm.resetSubtypeCycleOrder();
         mHandler.onFinishInputView(finishingInput);
@@ -500,6 +567,17 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
 
     @Override
     public void onWindowHidden() {
+        // Don't hide window if voice input is active
+        if (mIsVoiceInputActive) {
+            Log.d(TAG, "Preventing window hide during voice input");
+            // Stop voice input to prevent stuck state
+            if (mVoiceInputManager != null) {
+                mVoiceInputManager.stopListening();
+            }
+            mIsVoiceInputActive = false;
+            return;
+        }
+
         super.onWindowHidden();
         final MainKeyboardView mainKeyboardView = mKeyboardSwitcher.getMainKeyboardView();
         if (mainKeyboardView != null) {
@@ -978,19 +1056,48 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
      */
     private void onSuggestionSelected(rkr.simplekeyboard.inputmethod.latin.prediction.Suggestion suggestion) {
         if (suggestion == null) {
+            android.util.Log.e("LatinIME", "onSuggestionSelected: suggestion is null");
             return;
         }
 
-        // For now, just commit the suggestion
-        // The user will need to select it to replace current text
-        mInputLogic.mConnection.commitText(suggestion.getWord() + " ", 1);
+        android.util.Log.d("LatinIME", "onSuggestionSelected: " + suggestion.getWord());
+
+        // Get current input connection
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) {
+            android.util.Log.e("LatinIME", "onSuggestionSelected: InputConnection is null");
+            return;
+        }
+
+        // Delete any current composing text
+        ic.beginBatchEdit();
+        ic.finishComposingText();
+
+        // Get selected text and delete it
+        android.view.inputmethod.ExtractedText extractedText = ic.getExtractedText(
+            new android.view.inputmethod.ExtractedTextRequest(), 0);
+        if (extractedText != null) {
+            int selStart = extractedText.selectionStart;
+            int selEnd = extractedText.selectionEnd;
+
+            // If there's selected text, delete it
+            if (selStart >= 0 && selEnd > selStart) {
+                ic.deleteSurroundingText(0, selEnd - selStart);
+            }
+        }
+
+        // Commit the suggestion with a space
+        ic.commitText(suggestion.getWord() + " ", 1);
+        ic.endBatchEdit();
+
+        android.util.Log.d("LatinIME", "Committed text: " + suggestion.getWord());
 
         // Notify prediction engine
         if (mPredictionEngine != null) {
             mPredictionEngine.onWordCommitted(suggestion.getWord());
         }
 
-        // Clear suggestions
+        // Clear suggestions and request new ones
         if (mSuggestionStripView != null) {
             mSuggestionStripView.clear();
         }
@@ -1013,5 +1120,75 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
                 window.getInsetsController().setSystemBarsAppearance(0, flag);
             }
         }
+    }
+
+    /**
+     * Handle voice input text from speech recognition.
+     * @param text The recognized text from voice input
+     */
+    private void handleVoiceInputText(String text) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+
+        Log.i(TAG, "Voice input text: " + text);
+
+        // Commit the voice text to the input connection
+        mInputLogic.mConnection.commitText(text, 1);
+
+        // Optionally, we could also update suggestions based on the voice input
+        // For now, just clear suggestions
+        if (mSuggestionStripView != null) {
+            mSuggestionStripView.clear();
+        }
+
+        // Provide haptic feedback
+        hapticTickFeedback();
+    }
+
+    /**
+     * Handle voice input errors.
+     * @param errorCode Error code from SpeechRecognizer
+     */
+    private void handleVoiceInputError(int errorCode) {
+        Log.e(TAG, "Voice input error: " + errorCode);
+
+        // Could show a toast or other user feedback here
+        // For now, just log the error
+        String errorMessage;
+        switch (errorCode) {
+            case android.speech.SpeechRecognizer.ERROR_AUDIO:
+                errorMessage = "Audio recording error";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_CLIENT:
+                errorMessage = "Client side error";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                errorMessage = "Microphone permission not granted";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_NETWORK:
+                errorMessage = "Network error";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                errorMessage = "Network timeout";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_NO_MATCH:
+                errorMessage = "No speech recognized";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
+                errorMessage = "Recognition service busy";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_SERVER:
+                errorMessage = "Server error";
+                break;
+            case android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                errorMessage = "No speech detected";
+                break;
+            default:
+                errorMessage = "Unknown error";
+                break;
+        }
+
+        Log.e(TAG, "Voice recognition error: " + errorMessage);
     }
 }
