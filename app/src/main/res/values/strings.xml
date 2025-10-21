@@ -71,6 +71,8 @@
     <string name="subtype_compact">Compact</string>
     <!-- Description for a custom keyboard layout. -->
     <string name="subtype_custom">Custom</string>
+    <!-- Description for a phonetic keyboard layout. -->
+    <string name="subtype_phonetic">Phonetic</string>
     <!-- Description for Bulgarian (BDS) keyboard layout. -->
     <string name="subtype_bds">BDS</string>
     <!-- Description for Turkish (Q) keyboard layout. -->

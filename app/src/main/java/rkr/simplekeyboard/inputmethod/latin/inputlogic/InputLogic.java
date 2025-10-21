@@ -52,6 +52,9 @@ public final class InputLogic {
     public final RichInputConnection mConnection;
     private final RecapitalizeStatus mRecapitalizeStatus = new RecapitalizeStatus();
 
+    // Buffer for Kannada phonetic transliteration
+    private StringBuilder mPhoneticBuffer = new StringBuilder();
+
     /**
      * Create a new instance of the input logic.
      * @param latinIME the instance of the parent LatinIME. We should remove this when we can.
@@ -69,6 +72,7 @@ public final class InputLogic {
      */
     public void startInput() {
         mRecapitalizeStatus.disable(); // Do not perform recapitalize until the cursor is moved once
+        mPhoneticBuffer.setLength(0); // Clear phonetic buffer
     }
 
     public void clearCaches() {
@@ -309,6 +313,40 @@ public final class InputLogic {
      * @param inputTransaction The transaction in progress.
      */
     private void handleBackspaceEvent(final Event event, final InputTransaction inputTransaction) {
+        // Handle Kannada phonetic buffer
+        final Subtype currentSubtype = mLatinIME.getCurrentSubtype();
+        if (currentSubtype != null && SubtypeLocaleUtils.LAYOUT_KANNADA_PHONETIC.equals(currentSubtype.getKeyboardLayoutSet())) {
+            if (mPhoneticBuffer.length() > 0) {
+                // Get old transliteration
+                String oldTransliterated = rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator
+                        .transliterate(mPhoneticBuffer.toString());
+                // Use length() instead of codePointCount() - deleteTextBeforeCursor expects char count
+                int oldLength = oldTransliterated.length();
+
+                // Remove last character from buffer
+                mPhoneticBuffer.setLength(mPhoneticBuffer.length() - 1);
+
+                // Use batch edit for atomic operation
+                mConnection.beginBatchEdit();
+                try {
+                    // Delete old transliteration
+                    mConnection.deleteTextBeforeCursor(oldLength);
+
+                    if (mPhoneticBuffer.length() > 0) {
+                        // Get new transliteration and commit
+                        String newTransliterated = rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator
+                                .transliterate(mPhoneticBuffer.toString());
+                        mConnection.commitText(newTransliterated, 1);
+                    }
+                } finally {
+                    mConnection.endBatchEdit();
+                }
+
+                inputTransaction.requireShiftUpdate(InputTransaction.SHIFT_UPDATE_NOW);
+                return;
+            }
+        }
+
         // In many cases after backspace, we need to update the shift state. Normally we need
         // to do this right away to avoid the shift state being out of date in case the user types
         // backspace then some other character very fast. However, in the case of backspace key
@@ -543,6 +581,76 @@ public final class InputLogic {
             }
         }
 
+        // Handle Kannada phonetic transliteration
+        if (currentSubtype != null && SubtypeLocaleUtils.LAYOUT_KANNADA_PHONETIC.equals(currentSubtype.getKeyboardLayoutSet())) {
+            handleKannadaPhoneticInput((char) codePoint);
+            return;
+        }
+
         mConnection.commitText(StringUtils.newSingleCodePointString(codePoint), 1);
+    }
+
+    /**
+     * Handle phonetic transliteration for Kannada input.
+     * Buffers romanized input and transliterates to Kannada script.
+     *
+     * @param inputChar the character typed by the user
+     */
+    private void handleKannadaPhoneticInput(char inputChar) {
+        // Handle space - commit buffer and add space
+        if (inputChar == ' ') {
+            mPhoneticBuffer.setLength(0);  // Clear buffer after space
+            mConnection.commitText(" ", 1);
+            return;
+        }
+
+        // Check if this is a transliteration character
+        if (!rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator.isTransliterationChar(inputChar)) {
+            // Non-transliteration character - commit buffer first, then the character
+            mPhoneticBuffer.setLength(0);  // Clear buffer
+            mConnection.commitText(String.valueOf(inputChar), 1);
+            return;
+        }
+
+        // Get old transliteration (if any)
+        int oldLength = 0;
+        if (mPhoneticBuffer.length() > 0) {
+            String oldTransliterated = rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator
+                    .transliterate(mPhoneticBuffer.toString());
+            // Use length() instead of codePointCount() - deleteTextBeforeCursor expects char count
+            oldLength = oldTransliterated.length();
+        }
+
+        // Add to buffer
+        mPhoneticBuffer.append(inputChar);
+
+        // Get new transliteration
+        String newTransliterated = rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator
+                .transliterate(mPhoneticBuffer.toString());
+
+        // Use batch edit for atomic operation
+        mConnection.beginBatchEdit();
+        try {
+            // Delete old transliteration if any
+            if (oldLength > 0) {
+                mConnection.deleteTextBeforeCursor(oldLength);
+            }
+            // Commit new transliteration
+            mConnection.commitText(newTransliterated, 1);
+        } finally {
+            mConnection.endBatchEdit();
+        }
+    }
+
+    /**
+     * Commit the current phonetic buffer as final text.
+     */
+    private void commitPhoneticBuffer() {
+        if (mPhoneticBuffer.length() > 0) {
+            String transliterated = rkr.simplekeyboard.inputmethod.latin.utils.KannadaTransliterator
+                    .transliterate(mPhoneticBuffer.toString());
+            mConnection.commitText(transliterated, 1);
+            mPhoneticBuffer.setLength(0);
+        }
     }
 }
