@@ -255,6 +255,10 @@ public final class RichInputConnection {
         return mTextSelection;
     }
 
+    public String getTextBeforeCursorCached() {
+        return mTextBeforeCursor;
+    }
+
     public boolean canDeleteCharacters() {
         return mExpectedSelStart > 0;
     }
